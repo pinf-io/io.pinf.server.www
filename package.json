@@ -1,0 +1,24 @@
+{
+  "name": "io.pinf.server.www",
+  "version": "0.0.0",
+  "private": true,
+  "pm": "npm",
+  "main": "server.js",
+  "dependencies": {
+    "q": "~1.0.0",
+    "glob": "~3.2.9",
+    "fs-extra": "~0.8.1",
+    "requirejs": "~2.1.11",
+    "dot": "~1.0.2",
+    "pio": "^0.6",
+    "request": "~2.33.0",
+    "http-proxy": "~1.0.1",
+    "send": "~0.2.0",
+    "express": "~3.4.8"
+  },
+  "config": {
+    "pio.deploy.converter": {
+      "name": "nodejs-server"
+    }
+  }
+}
