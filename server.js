@@ -25,6 +25,17 @@ exports.for = function(module, packagePath, extraConfigureHandler, extraRoutesHa
 
 			try {
 
+				var documentRootPath = "www";
+				if (
+					pio._config.config["pio.service"].config &&
+					pio._config.config["pio.service"].config['io.pinf.server.www'] &&
+					pio._config.config["pio.service"].config['io.pinf.server.www'].documentRootPath
+				) {
+					documentRootPath = pio._config.config["pio.service"].config['io.pinf.server.www'].documentRootPath;
+				}
+
+				console.log("Using document root path:", documentRootPath);
+
 			    var app = EXPRESS();
 			    var proxy = HTTP_PROXY.createProxyServer({});
 
@@ -53,7 +64,7 @@ exports.for = function(module, packagePath, extraConfigureHandler, extraRoutesHa
 
 		    		function formatPath(callback) {
 				    	if (!req.headers['x-theme']) {
-				    		return callback(null, PATH.join(packagePath, "www", pathname));
+				    		return callback(null, PATH.join(packagePath, documentRootPath, pathname));
 				    	}
 
 			    		// Don't allow slashes in themes.
@@ -87,7 +98,7 @@ exports.for = function(module, packagePath, extraConfigureHandler, extraRoutesHa
 									.pipe(res);
 			    			}
 
-			    			var overlayPath = PATH.join(packagePath, "www", pathname.replace(/(\.[^\/]+)$/, ".overlay$1"));
+			    			var overlayPath = PATH.join(packagePath, documentRootPath, pathname.replace(/(\.[^\/]+)$/, ".overlay$1"));
 
 	    					function loadOverlay(callback) {
 					    		return FS.exists(overlayPath, function(overlayExists) {
