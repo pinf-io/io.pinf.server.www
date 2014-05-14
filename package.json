@@ -11,6 +11,8 @@
     "requirejs": "~2.1.11",
     "dot": "~1.0.2",
     "pio": "^0.6",
+    "deepmerge": "~0.2.7",
+    "deepcopy": "~0.3.3",
     "request": "~2.33.0",
     "http-proxy": "~1.0.1",
     "send": "~0.2.0",

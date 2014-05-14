@@ -8,12 +8,14 @@ const REQUEST = require("request");
 const HTTP_PROXY = require("http-proxy");
 const DOT = require("dot");
 const PIO = require("pio");
+const DEEPMERGE = require("deepmerge");
+const DEEPCOPY = require("deepcopy");
 
 
 var PORT = process.env.PORT || 8080;
 
 
-exports.for = function(module, packagePath) {
+exports.for = function(module, packagePath, extraConfigureHandler, extraRoutesHandler) {
 
 	var exports = module.exports;
 
@@ -31,6 +33,9 @@ exports.for = function(module, packagePath) {
 			        app.use(EXPRESS.cookieParser());
 			        app.use(EXPRESS.bodyParser());
 			        app.use(EXPRESS.methodOverride());
+			        if (extraConfigureHandler) {
+			        	extraConfigureHandler(app);
+			        }
 			        app.use(app.router);
 			    });
 
@@ -38,154 +43,306 @@ exports.for = function(module, packagePath) {
 			    	return res.end();
 			    });
 
-			    app.get(/^\//, function(req, res, next) {
+		        if (extraRoutesHandler) {
+		        	extraRoutesHandler(app);
+		        }
+
+			    function processRequest(requestConfig, req, res, next) {
 		    		var pathname = req._parsedUrl.pathname;
 		    		if (pathname === "/") pathname = "/index.html";
-		    		var path = PATH.join(packagePath, "www", pathname);
-		    		return FS.exists(path, function(exists) {
-		    			console.log("path", path, exists);
-		    			if (exists) {
-		    				// Serve local file.
-							return SEND(req, PATH.basename(path))
-								.root(PATH.dirname(path))
-								.on('error', next)
-								.pipe(res);
-		    			}
-		    			var overlayPath = PATH.join(packagePath, "www", pathname.replace(/(\.[^\/]+)$/, ".overlay$1"));
-			    		return FS.exists(overlayPath, function(exists) {
-			    			console.log("overlayPath", overlayPath, exists);
+
+		    		function formatPath(callback) {
+				    	if (!req.headers['x-theme']) {
+				    		return callback(null, PATH.join(packagePath, "www", pathname));
+				    	}
+
+			    		// Don't allow slashes in themes.
+			    		// TODO: Use abstracted sanitizer.
+			    		if (/\//.test(req.headers['x-theme'])) {
+			    			res.writeHead(404);
+			    			return res.end();
+			    		}
+
+			    		// TODO: Make themes path configurable.
+			    		var path = PATH.join(packagePath, "themes", req.headers['x-theme']);
+			    		return FS.exists(path, function(exists) {
+			    			if (!exists) {
+				    			res.writeHead(404);
+				    			return res.end();
+			    			}
+			    			return callback(null, PATH.join(path, pathname));
+			    		});
+		    		}
+
+			    	return formatPath(function(err, path) {
+			    		if (err) return next(err);
+
+			    		return FS.exists(path, function(exists) {
+			    			console.log("path", path, exists);
 			    			if (exists) {
-			    				function processOverlay() {
+			    				// Serve local file.
+								return SEND(req, PATH.basename(path))
+									.root(PATH.dirname(path))
+									.on('error', next)
+									.pipe(res);
+			    			}
+
+			    			var overlayPath = PATH.join(packagePath, "www", pathname.replace(/(\.[^\/]+)$/, ".overlay$1"));
+
+	    					function loadOverlay(callback) {
+					    		return FS.exists(overlayPath, function(overlayExists) {
+					    			console.log("overlayPath", overlayPath, overlayExists);
+					    			if (!overlayExists) {
+					    				return callback(null, false);
+					    			}
+				    				return FS.readFile(overlayPath, "utf8", callback);
+				    			});
+	    					}
+
+	    					function makeUpstreamRequests(pathname, sendConfig, callback) {
+		    					if (
+		    						!pio._config.config["pio.service"].config ||
+		    						!pio._config.config["pio.service"].config.www ||
+		    						!pio._config.config["pio.service"].config.www.extends
+		    					) {
+		    						return callback(null, null, null);
+		    					}    						
+	    						// We call one URL after another until we get a 200 response at which point we stop.
+				    			var urls = [].concat(pio._config.config["pio.service"].config.www.extends);
+	    						function makeRequest(upstreamInfo) {
+									if (typeof upstreamInfo === "string") {
+				    					upstreamInfo = {
+				    						host: upstreamInfo
+				    					};
+				    				}
+					    			console.log("upstreamInfo", upstreamInfo);
+				    				var headers = {};
+				    				if (upstreamInfo.theme) {
+										headers["x-theme"] = upstreamInfo.theme;
+				    				}
+					    			var url = "http://" + upstreamInfo.host + pathname;
+					    			var params = {
+					    				url: url,
+					    				headers: headers
+					    			};
+					    			if (sendConfig) {
+					    				params.method = "POST";
+					    				params.json = sendConfig;
+					    				params.headers["x-config"] = "in-body";
+					    			}
+					    			return REQUEST(params, function(err, response, body) {
+					    				if (err) {
+					    					console.error("body", body);
+					    					console.error("Error calling '" + url + "':", err.stack);
+					    					err.message += " (while calling '" + url + "')";
+					    					err.stack += "\n(while calling '" + url + "')";
+					    					return callback(err);
+					    				}
+					    				response._url = url;
+					    				if (response.statusCode === 404) {
+					    					if (urls.length === 0) {
+					    						return callback(null, response, null);
+					    					}
+					    					return makeRequest(urls.pop());
+					    				}
+					    				if (response.statusCode !== 200) return callback(new Error("Did not get status 200 when fetching from: " + url));
+					    				return callback(null, response, body);
+					    			});
+	    						}
+	    						return makeRequest(urls.pop());
+	    					}
+
+	    					function loadConfig(templateSource, callback) {
+
+	    						function loadLocal(callback) {
+					    			var configPath = overlayPath.replace(/\.[^\.]+$/, ".json");
+						    		return FS.exists(configPath, function(configExists) {
+						    			console.log("configPath", configPath, configExists);
+						    			if (!configExists) {
+						    				return callback(null, false);
+						    			}
+						    			return FS.readJson(configPath, callback);
+						    		});
+	    						}
+
+	    						return loadLocal(function(err, localConfig) {
+	    							if (err) return callback(err);
+
+	    							var config = requestConfig;
+	    							if (localConfig) {
+	    								config = DEEPMERGE(localConfig, config || {});
+	    							}
+	    							if (config === false) {
+					    				return callback(null, config);
+	    							}
+
+				    				return makeUpstreamRequests(pathname.replace(/(\.[^\/]+)$/, ".overlay.json"), null, function(err, response, body) {
+				    					if (err) return next(err);
+				    					if (!response) {
+				    						return callback(null, config);
+				    					}
+				    					if (body) {
+				    						config = DEEPMERGE(JSON.parse(body), config || {});
+				    					}
+			    						return callback(null, config);
+					    			});
+			    				});
+	    					}
+
+		    				function processOverlay(config, templateSource) {
+			    				return makeUpstreamRequests(pathname, config, function(err, response, body) {
+			    					if (err) return next(err);
+
+			    					if (!response) {
+			    						if (!templateSource) {
+			    							// We found nothing upstream and have no template ourselves.
+			    							return next();
+			    						}
+			    						// TODO: Turn into better help message.
+			    						return callback(new Error("We have an overlay at '" + overlayPath + "' but there are no upstream servers configured! Please configure upstream servers!"));
+			    					}
+
+			    					if (response.statusCode === 404) {
+			    						return callback(new Error("No upstream file found at url '" + response._url + "' even though we have an overlay at '" + overlayPath + "'! Remove the overlay or make sure the file is served by upstream server."));
+			    					}
+
+		                            // TODO: Get own instance: https://github.com/olado/doT/issues/112
+		                            DOT.templateSettings.strip = false;
+		                            DOT.templateSettings.varname = "at";
+			                        var compiled = null;
+
+			                        try {
+			                            compiled = DOT.template(templateSource);
+			                        } catch(err) {
+										console.error("templateSource", templateSource);
+			                        	console.error("Error compiling template: " + overlayPath);
+			                            return next(err);
+			                        }
+
+
+			                        var anchors = {};
+									var re = /\{\{=view\.anchor\.([^\}]+)\}\}/g;
+									var m;
+									while (m = re.exec(body)) {
+										var at = DEEPCOPY(config);
+										at.config = JSON.stringify(config);
+										at[m[1]] = true;
+			                            try {
+			                            	console.log("Replacing variables in '" + overlayPath + "' with:", JSON.stringify(at, null, 4));
+											anchors[m[1]] = compiled(at) || "";
+			                            } catch(err) {
+				                        	console.error("Error running compiled template: " + overlayPath);
+				                            return next(err);
+			                            }
+									}
+
+
+		                            DOT.templateSettings.varname = "view";
+			                        try {
+			                            compiled = DOT.template(body);
+			                        } catch(err) {
+										console.error("body", body);
+			                        	console.error("Error compiling template: " + url);
+			                            return next(err);
+			                        }
+
+
+		                            var result = null;
+		                            try {
+		                                result = compiled({
+		                                	title: "Our Title",
+		                                	anchor: anchors
+		                                });
+		                            } catch(err) {
+			                        	console.error("Error running compiled template: " + url);
+			                            return next(err);
+		                            }
+
+		                            // TODO: Send proper headers.
+		                            res.writeHead(200, {
+		                            	"Content-Type": response.headers["content-type"],
+		                            	"Content-Length": result.length
+		                            });
+		                            return res.end(result);
+				    			});
+		    				}
+
+		    				return loadOverlay(function(err, templateSource) {
+		    					if (err) return next(err);
+
+			    				return loadConfig(templateSource, function(err, config) {
+			    					if (err) return next(err);
+
+			    					if (templateSource || config) {
+					    				return processOverlay(config, templateSource);
+			    					}
+
+			    					if (
+			    						!pio._config.config["pio.service"].config ||
+			    						!pio._config.config["pio.service"].config.www ||
+			    						!pio._config.config["pio.service"].config.www.extends
+			    					) {
+			    						return next();
+			    					}
+
 					    			var urls = [].concat(pio._config.config["pio.service"].config.www.extends);
-					    			function proxyUpstream(upstreamInfo) {
+					    			function forwardUpstream(upstreamInfo) {
 					    				if (typeof upstreamInfo === "string") {
 					    					upstreamInfo = {
 					    						host: upstreamInfo
 					    					};
 					    				}
-						    			console.log("upstreamInfo", upstreamInfo);
 					    				var headers = {};
 					    				if (upstreamInfo.theme) {
 											headers["x-theme"] = upstreamInfo.theme;
 					    				}
-						    			var url = "http://" + upstreamInfo.host + pathname;
-						    			return REQUEST({
-						    				url: url,
-						    				headers: headers
-						    			}, function(err, response, body) {
-						    				if (err) return next(err);
-						    				if (response.statusCode === 404) {
-						    					if (urls.length === 0) return next(new Error("No upstream file found at url '" + url + "' even though we have an overlay at '" + overlayPath + "'! Remove the overlay or make sure the file is served by upstream server."));
-						    					return proxyUpstream(urls.pop());
+										var url = "http://" + upstreamInfo.host + pathname;
+					    				return REQUEST({
+					    					url: url,
+					    					method: "HEAD",
+					    					headers: headers
+					    				}, function(err, response, body) {
+					    					if (err) {
+												console.error("PROXY HEAD ERROR", err, err.stack);
+					    						return next(err);
+					    					}
+					    					if (response.statusCode === 404) {
+						    					if (urls.length === 0) return next();
+						    					return forwardUpstream(urls.pop());
+					    					}
+						    				if (upstreamInfo.theme) {
+								    			req.headers["x-theme"] = upstreamInfo.theme;
 						    				}
-						    				if (response.statusCode !== 200) return next(new Error("Did not get status 200 when fetching from: " + url));
-
-						    				return FS.readFile(overlayPath, "utf8", function(err, templateSource) {
-						    					if (err) return next(err);
-
-					                            // TODO: Get own instance: https://github.com/olado/doT/issues/112
-					                            DOT.templateSettings.strip = false;
-					                            DOT.templateSettings.varname = "at";
-						                        var compiled = null;
-						                        try {
-						                            compiled = DOT.template(templateSource);
-						                        } catch(err) {
-													console.error("templateSource", templateSource);
-						                        	console.error("Error compiling template: " + overlayPath);
-						                            return next(err);
-						                        }
-
-
-						                        var anchors = {};
-												var re = /\{\{=view\.anchor\.([^\}]+)\}\}/g;
-												var m;
-												while (m = re.exec(body)) {
-													var at = {};
-													at[m[1]] = true;
-						                            try {
-														anchors[m[1]] = compiled(at) || "";
-						                            } catch(err) {
-							                        	console.error("Error running compiled template: " + overlayPath);
-							                            return next(err);
-						                            }
-												}
-
-
-					                            DOT.templateSettings.varname = "view";
-						                        try {
-						                            compiled = DOT.template(body);
-						                        } catch(err) {
-													console.error("body", body);
-						                        	console.error("Error compiling template: " + url);
-						                            return next(err);
-						                        }
-
-
-					                            var result = null;
-					                            try {
-					                                result = compiled({
-					                                	title: "Our Title",
-					                                	anchor: anchors
-					                                });
-					                            } catch(err) {
-						                        	console.error("Error running compiled template: " + url);
-						                            return next(err);
-					                            }
-
-					                            // TODO: Send proper headers.
-					                            res.writeHead(200, {
-					                            	"Content-Type": response.headers["content-type"],
-					                            	"Content-Length": result.length
-					                            });
-					                            return res.end(result);
-						    				});
-						    			});
+								            return proxy.web(req, res, {
+								                target: "http://" + upstreamInfo.host
+								            }, function(err) {
+												console.error("PROXY ERROR", err, err.stack);
+								                if (err.code === "ECONNREFUSED") {
+								                    res.writeHead(502);
+								                    return res.end("Bad Gateway");
+								                }
+							                    res.writeHead(500);
+							                    console.error(err.stack);
+							                    return res.end("Internal Server Error");
+								            });
+					    				});
 					    			}
-					    			return proxyUpstream(urls.pop());
-			    				}
-			    				return processOverlay();
-			    			}
-			    			var urls = [].concat(pio._config.config["pio.service"].config.www.extends);
-			    			function forwardUpstream(upstreamInfo) {
-			    				if (typeof upstreamInfo === "string") {
-			    					upstreamInfo = {
-			    						host: upstreamInfo
-			    					};
-			    				}
-			    				var headers = {};
-			    				if (upstreamInfo.theme) {
-									headers["x-theme"] = upstreamInfo.theme;
-			    				}
-								var url = "http://" + upstreamInfo.host + pathname;
-			    				return REQUEST({
-			    					url: url,
-			    					method: "HEAD",
-			    					headers: headers
-			    				}, function(err, response, body) {
-			    					if (err) return next(err);
-			    					if (response.statusCode === 404) {
-				    					if (urls.length === 0) return next();
-				    					return forwardUpstream(urls.pop());
-			    					}
-				    				if (upstreamInfo.theme) {
-						    			req.headers["x-theme"] = upstreamInfo.theme;
-				    				}
-						            return proxy.web(req, res, {
-						                target: "http://" + upstreamInfo.host
-						            }, function(err) {
-						                if (err.code === "ECONNREFUSED") {
-						                    res.writeHead(502);
-						                    return res.end("Bad Gateway");
-						                }
-					                    res.writeHead(500);
-					                    console.error(err.stack);
-					                    return res.end("Internal Server Error");
-						            });
+					    			return forwardUpstream(urls.pop());
 			    				});
-			    			}
-			    			return forwardUpstream(urls.pop());
+		    				});
 			    		});
 		    		});
+			    }
+
+			    app.post(/^\//, function(req, res, next) {
+			    	if (req.headers["x-config"] === "in-body") {
+						return processRequest(req.body, req, res, next);
+			    	}
+			    	return next();
+			    });
+
+			    app.get(/^\//, function(req, res, next) {
+			    	return processRequest(false, req, res, next);
 			    });
 
 				var server = app.listen(PORT);
