@@ -59,8 +59,21 @@ exports.for = function(module, packagePath, extraConfigureHandler, extraRoutesHa
 		        }
 
 			    function processRequest(requestConfig, req, res, next) {
+
 		    		var pathname = req._parsedUrl.pathname;
 		    		if (pathname === "/") pathname = "/index.html";
+
+		    		// This is a standard route to echo a value specified as a query argument
+		    		// back as a session cookie.
+		    		// TODO: Standardize a route such as this.
+		            if (pathname === "/.set-session-cookie" && req.query.sid) {
+		                res.writeHead(204, {
+		                    'Set-Cookie': 'x-pio-server-sid=' + req.query.sid,
+		                    'Content-Type': 'text/plain',
+		                    'Content-Length': "0"
+		                });
+		                return res.end();
+		            }
 
 		    		function formatPath(callback) {
 				    	if (!req.headers['x-theme']) {
