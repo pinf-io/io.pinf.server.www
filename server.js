@@ -45,7 +45,7 @@ exports.for = function(module, packagePath, extraConfigureHandler, extraRoutesHa
 			        app.use(EXPRESS.bodyParser());
 			        app.use(EXPRESS.methodOverride());
 			        if (extraConfigureHandler) {
-			        	extraConfigureHandler(app);
+			        	extraConfigureHandler(app, pio._config.config["pio.service"]);
 			        }
 			        app.use(app.router);
 			    });
@@ -55,7 +55,7 @@ exports.for = function(module, packagePath, extraConfigureHandler, extraRoutesHa
 			    });
 
 		        if (extraRoutesHandler) {
-		        	extraRoutesHandler(app);
+		        	extraRoutesHandler(app, pio._config.config["pio.service"]);
 		        }
 
 			    function processRequest(requestConfig, req, res, next) {
