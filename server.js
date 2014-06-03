@@ -23,7 +23,7 @@ const METHOD_OVERRIDE = require("method-override");
 var PORT = process.env.PORT || 8080;
 
 
-exports.for = function(module, packagePath, extraConfigureHandler, extraRoutesHandler) {
+exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutesHandler, appCreatorHandler) {
 
 	var exports = module.exports;
 
@@ -44,7 +44,16 @@ exports.for = function(module, packagePath, extraConfigureHandler, extraRoutesHa
 
 				console.log("Using document root path:", documentRootPath);
 
-			    var app = EXPRESS();
+			    var app = null;
+			    if (appCreatorHandler) {
+			    	app = appCreatorHandler(pio._config.config["pio.service"], {
+		        		API: {
+		        			EXPRESS: EXPRESS
+		        		}
+		        	});
+				} else {
+					app = EXPRESS();
+				}
 			    var proxy = HTTP_PROXY.createProxyServer({});
 
 		        app.use(MORGAN());
@@ -68,20 +77,22 @@ exports.for = function(module, packagePath, extraConfigureHandler, extraRoutesHa
 						})
 					}));
 				}
-		        if (extraConfigureHandler) {
-		        	extraConfigureHandler(app, pio._config.config["pio.service"], {
+		        if (preAutoRoutesHandler) {
+		        	preAutoRoutesHandler(app, pio._config.config["pio.service"], {
 		        		API: {
 		        			EXPRESS: EXPRESS
 		        		}
 		        	});
 		        }
 
+		        // Default routes inserted by config.
+
 			    app.get("/favicon.ico", function (req, res, next) {
 			    	return res.end();
 			    });
 
-		        if (extraRoutesHandler) {
-		        	extraRoutesHandler(app, pio._config.config["pio.service"]);
+		        if (postAutoRoutesHandler) {
+		        	postAutoRoutesHandler(app, pio._config.config["pio.service"]);
 		        }
 
 			    function processRequest(requestConfig, req, res, next) {
