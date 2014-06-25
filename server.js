@@ -20,6 +20,7 @@ const MORGAN = require("morgan");
 const METHOD_OVERRIDE = require("method-override");
 const RETHINKDB = require("rethinkdb");
 const WAITFOR = require("waitfor");
+const Q = require("q");
 
 
 var PORT = process.env.PORT || 8080;
@@ -50,7 +51,10 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 			    if (appCreatorHandler) {
 			    	app = appCreatorHandler(pio._config.config["pio.service"], {
 		        		API: {
-		        			EXPRESS: EXPRESS
+		        			EXPRESS: EXPRESS,
+							DEEPMERGE: DEEPMERGE,
+							WAITFOR: WAITFOR,
+							Q: Q
 		        		}
 		        	});
 				} else {
@@ -79,11 +83,93 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 						})
 					}));
 				}
+				var r = null;
 				if (
 					pio._config.config["pio.service"].config &&
 					pio._config.config["pio.service"].config.rethinkdbHost
 				) {
-					var rethinkdbConnection = null;
+					r = Object.create(RETHINKDB);
+					var tableEnsure__pending = [];
+				    r.tableEnsure = function (DB_NAME, TABLE_NAME, tableSuffix, options, callback, _previous) {
+				    	if (typeof options === "function") {
+				    		_previous = callback;
+				    		callback = options;
+				    		options = null;
+				    	}
+				    	options = options || {};
+				    	if (tableEnsure__pending !== false) {
+				    		tableEnsure__pending.push([DB_NAME, TABLE_NAME, tableSuffix, options, callback, _previous]);
+				    		return;
+				    	}
+				        return r.db(DB_NAME).table(TABLE_NAME + "__" + tableSuffix).run(r.conn, function(err) {
+				            if (err) {
+				                if (/Database .+? does not exist/.test(err.msg)) {
+				                    if (_previous === "dbCreate") return callback(err);
+				                    return r.dbCreate(DB_NAME).run(r.conn, function (err) {
+				                        if (err) return callback(err);
+				                        return r.tableEnsure(DB_NAME, TABLE_NAME, tableSuffix, options, callback, "dbCreate");
+				                    });
+				                }
+				                if (/Table .+? does not exist/.test(err.msg)) {
+				                    if (_previous === "tableCreate") return callback(err);
+				                    return r.db(DB_NAME).tableCreate(TABLE_NAME + "__" + tableSuffix).run(r.conn, function (err) {
+				                        if (err) return callback(err);
+				                        return r.tableEnsure(DB_NAME, TABLE_NAME, tableSuffix, options, callback, "tableCreate");
+				                    });
+				                }
+				                return callback(err);
+				            }
+				            function ensureIndexes(callback) {
+					            if (!options.indexes) {
+					            	return callback(null);
+					            }
+					            return r.db(DB_NAME).table(TABLE_NAME + "__" + tableSuffix).indexList().run(r.conn, function (err, result) {
+					                if (err) return callback(err);
+						            var waitfor = WAITFOR.parallel(callback);
+						            options.indexes.forEach(function(indexName) {
+						            	if (result.indexOf(indexName) !== -1) {
+						            		return;
+						            	}
+						            	waitfor(function(callback) {
+						            		console.log("Creating index", indexName, "on table", TABLE_NAME + "__" + tableSuffix);
+								            return r.db(DB_NAME).table(TABLE_NAME + "__" + tableSuffix).indexCreate(indexName).run(r.conn, function (err, result) {
+								                if (err) return callback(err);
+							            		return callback(null);
+							            	});
+						            	});
+						            });
+						            return waitfor();
+						        });
+				            }
+				            return ensureIndexes(function(err) {
+				            	if (err) return callback(err);
+					            return callback(null, r.db(DB_NAME).table(TABLE_NAME + "__" + tableSuffix));
+				            });
+				        });
+				    }
+				    r.getCached = function (DB_NAME, TABLE_NAME, tableSuffix, key, callback) {
+				        return r.tableEnsure(DB_NAME, TABLE_NAME, tableSuffix, function(err, table) {
+				            if (err) return callback(err);
+				            return table.get(key).run(r.conn, function (err, result) {
+				                if (err) return callback(err);
+				                if (result) {
+				//                    console.log("Using cached data for key '" + key + "':", result.data);
+				                    return callback(null, result.data);
+				                }
+				                return callback(null, null, function (data, callback) {
+				                    return table.insert({
+				                        id: key,
+				                        data: data
+				                    }, {
+				                        upsert: true
+				                    }).run(r.conn, function (err, result) {
+				                        if (err) return callback(err);
+				                        return callback(null, data);
+				                    });
+				                });
+				            });
+				        });
+				    }
 					RETHINKDB.connect({
 						host: pio._config.config["pio.service"].config.rethinkdbHost.split(":")[0],
 						port: parseInt(pio._config.config["pio.service"].config.rethinkdbHost.split(":")[1])
@@ -92,89 +178,18 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 							console.error("Error connecting to RethinkDB host: " + pio._config.config["pio.service"].config.rethinkdbHost, err);
 							return;
 					  	}
-					  	rethinkdbConnection = conn;
+  						r.conn = conn;
+
+						console.log("Now that DB is connected run pending queries ...");
+						var pending = tableEnsure__pending;
+						tableEnsure__pending = false;
+						pending.forEach(function (call) {
+							r.tableEnsure.apply(r, call);
+						});
 					});
 					app.use(function(req, res, next) {
-						if (rethinkdbConnection) {
-							var r = Object.create(RETHINKDB);
+						if (r) {
 							res.r = r;
-							res.r.conn = rethinkdbConnection;
-						    res.r.tableEnsure = function (DB_NAME, TABLE_NAME, tableSuffix, options, callback, _previous) {
-						    	if (typeof options === "function") {
-						    		_previous = callback;
-						    		callback = options;
-						    		options = null;
-						    	}
-						    	options = options || {};
-						        return r.db(DB_NAME).table(TABLE_NAME + "__" + tableSuffix).run(r.conn, function(err) {
-						            if (err) {
-						                if (/Database .+? does not exist/.test(err.msg)) {
-						                    if (_previous === "dbCreate") return callback(err);
-						                    return r.dbCreate(DB_NAME).run(r.conn, function (err) {
-						                        if (err) return callback(err);
-						                        return res.r.tableEnsure(DB_NAME, TABLE_NAME, tableSuffix, options, callback, "dbCreate");
-						                    });
-						                }
-						                if (/Table .+? does not exist/.test(err.msg)) {
-						                    if (_previous === "tableCreate") return callback(err);
-						                    return r.db(DB_NAME).tableCreate(TABLE_NAME + "__" + tableSuffix).run(r.conn, function (err) {
-						                        if (err) return callback(err);
-						                        return res.r.tableEnsure(DB_NAME, TABLE_NAME, tableSuffix, options, callback, "tableCreate");
-						                    });
-						                }
-						                return callback(err);
-						            }
-						            function ensureIndexes(callback) {
-							            if (!options.indexes) {
-							            	return callback(null);
-							            }
-							            return r.db(DB_NAME).table(TABLE_NAME + "__" + tableSuffix).indexList().run(r.conn, function (err, result) {
-							                if (err) return callback(err);
-								            var waitfor = WAITFOR.parallel(callback);
-								            options.indexes.forEach(function(indexName) {
-								            	if (result.indexOf(indexName) !== -1) {
-								            		return;
-								            	}
-								            	waitfor(function(callback) {
-								            		console.log("Creating index", indexName, "on table", TABLE_NAME + "__" + tableSuffix);
-										            return r.db(DB_NAME).table(TABLE_NAME + "__" + tableSuffix).indexCreate(indexName).run(r.conn, function (err, result) {
-										                if (err) return callback(err);
-									            		return callback(null);
-									            	});
-								            	});
-								            });
-								            return waitfor();
-								        });
-						            }
-						            return ensureIndexes(function(err) {
-						            	if (err) return callback(err);
-							            return callback(null, r.db(DB_NAME).table(TABLE_NAME + "__" + tableSuffix));
-						            });
-						        });
-						    }
-						    res.r.getCached = function (DB_NAME, TABLE_NAME, tableSuffix, key, callback) {
-						        return res.r.tableEnsure(DB_NAME, TABLE_NAME, tableSuffix, function(err, table) {
-						            if (err) return callback(err);
-						            return table.get(key).run(r.conn, function (err, result) {
-						                if (err) return callback(err);
-						                if (result) {
-						//                    console.log("Using cached data for key '" + key + "':", result.data);
-						                    return callback(null, result.data);
-						                }
-						                return callback(null, null, function (data, callback) {
-						                    return table.insert({
-						                        id: key,
-						                        data: data
-						                    }, {
-						                        upsert: true
-						                    }).run(r.conn, function (err, result) {
-						                        if (err) return callback(err);
-						                        return callback(null, data);
-						                    });
-						                });
-						            });
-						        });
-						    }							
 						}
 						return next();
 					});
@@ -211,8 +226,12 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 		        if (preAutoRoutesHandler) {
 		        	preAutoRoutesHandler(app, pio._config.config["pio.service"], {
 		        		API: {
-		        			EXPRESS: EXPRESS
-		        		}
+		        			EXPRESS: EXPRESS,
+							DEEPMERGE: DEEPMERGE,
+							WAITFOR: WAITFOR,
+							Q: Q
+		        		},
+	        			r: r
 		        	});
 		        }
 
@@ -434,6 +453,30 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 			    					if (body) {
 			    						config = DEEPMERGE(JSON.parse(body), config || {});
 			    					}
+
+//			    					console.log("Replace variables in config", config);
+
+			    					var compiled = null;
+		                            DOT.templateSettings.varname = "config";
+			                        try {
+			                            compiled = DOT.template(JSON.stringify(config));
+			                        } catch(err) {
+										console.error("config", JSON.stringify(config, null, 4));
+			                        	console.error("Error compiling template: " + url);
+			                            return next(err);
+			                        }
+
+		                            var result = null;
+		                            try {
+		                                result = compiled(pio._config.config);
+		                            } catch(err) {
+			                        	console.error("Error running compiled template: " + url);
+			                            return next(err);
+		                            }
+
+		                            config = JSON.parse(result);
+
+
 		    						return callback(null, config);
 				    			});
 		    				});
