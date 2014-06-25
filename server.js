@@ -106,14 +106,26 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 				                if (/Database .+? does not exist/.test(err.msg)) {
 				                    if (_previous === "dbCreate") return callback(err);
 				                    return r.dbCreate(DB_NAME).run(r.conn, function (err) {
-				                        if (err) return callback(err);
+				                        if (err) {
+							                if (/Database .+? already exists/.test(err.msg)) {
+							                	// Ignore. Someone else beat us to it!
+							                } else {
+					                        	return callback(err);
+							                }
+				                        }
 				                        return r.tableEnsure(DB_NAME, TABLE_NAME, tableSuffix, options, callback, "dbCreate");
 				                    });
 				                }
 				                if (/Table .+? does not exist/.test(err.msg)) {
 				                    if (_previous === "tableCreate") return callback(err);
 				                    return r.db(DB_NAME).tableCreate(TABLE_NAME + "__" + tableSuffix).run(r.conn, function (err) {
-				                        if (err) return callback(err);
+				                        if (err) {
+							                if (/Table .+? already exists/.test(err.msg)) {
+							                	// Ignore. Someone else beat us to it!
+							                } else {
+					                        	return callback(err);
+							                }
+				                        }
 				                        return r.tableEnsure(DB_NAME, TABLE_NAME, tableSuffix, options, callback, "tableCreate");
 				                    });
 				                }
@@ -122,7 +134,7 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 				            function ensureIndexes(callback) {
 					            if (!options.indexes) {
 					            	return callback(null);
-					            }
+					            }					            
 					            return r.db(DB_NAME).table(TABLE_NAME + "__" + tableSuffix).indexList().run(r.conn, function (err, result) {
 					                if (err) return callback(err);
 						            var waitfor = WAITFOR.parallel(callback);
@@ -133,7 +145,13 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 						            	waitfor(function(callback) {
 						            		console.log("Creating index", indexName, "on table", TABLE_NAME + "__" + tableSuffix);
 								            return r.db(DB_NAME).table(TABLE_NAME + "__" + tableSuffix).indexCreate(indexName).run(r.conn, function (err, result) {
-								                if (err) return callback(err);
+						                        if (err) {
+									                if (/Index .+? already exists/.test(err.msg)) {
+									                	// Ignore. Someone else beat us to it!
+									                } else {
+							                        	return callback(err);
+									                }
+						                        }
 							            		return callback(null);
 							            	});
 						            	});
