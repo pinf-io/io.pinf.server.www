@@ -2,6 +2,8 @@
 const ASSERT = require("assert");
 const PATH = require("path");
 const FS = require("fs-extra");
+const URL = require("url");
+const QUERYSTRING = require("querystring");
 const EXPRESS = require("express");
 const EXPRESS_SESSION = require("express-session");
 const SEND = require("send");
@@ -21,6 +23,7 @@ const METHOD_OVERRIDE = require("method-override");
 const RETHINKDB = require("rethinkdb");
 const WAITFOR = require("waitfor");
 const Q = require("q");
+const CRYPTO = require("crypto");
 
 
 var PORT = process.env.PORT || 8080;
@@ -31,6 +34,12 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 	var exports = module.exports;
 
 	exports.main = function(callback) {
+
+	    var pioConfig = FS.readJsonSync(PATH.join(__dirname, "../.pio.json"));
+
+	    var authCode = CRYPTO.createHash("sha1");
+	    authCode.update(["auth-code", pioConfig.config.pio.instanceId, pioConfig.config.pio.instanceSecret].join(":"));
+	    authCode = authCode.digest("hex");
 
 		return PIO.forPackage(packagePath).then(function(pio) {
 
@@ -51,10 +60,12 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 			    if (appCreatorHandler) {
 			    	app = appCreatorHandler(pio._config.config["pio.service"], {
 		        		API: {
+		        			FS: FS,
 		        			EXPRESS: EXPRESS,
 							DEEPMERGE: DEEPMERGE,
 							WAITFOR: WAITFOR,
-							Q: Q
+							Q: Q,
+							REQUEST: REQUEST
 		        		}
 		        	});
 				} else {
@@ -71,17 +82,25 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 					pio._config.config["pio.service"].config &&
 					pio._config.config["pio.service"].config.memcachedHost
 				) {
+					var originalSessionPrefix = "io.pinf.server.www-";
+					var sessionStore = new (CONNECT_MEMCACHED(EXPRESS_SESSION))({
+						prefix: originalSessionPrefix,
+						hosts: [
+							pio._config.config["pio.service"].config.memcachedHost
+						]
+					});
 					app.use(EXPRESS_SESSION({
 						secret: 'session secret',
 						key: 'sid',
 						proxy: 'true',
-						store: new (CONNECT_MEMCACHED(EXPRESS_SESSION))({
-							prefix: "io.pinf.server.www-",
-							hosts: [
-								pio._config.config["pio.service"].config.memcachedHost
-							]
-						})
+						store: sessionStore
 					}));
+					if (!app.helpers) {
+						app.helpers = {};
+					}
+					app.helpers.destroyAllSessions = function() {
+						sessionStore.prefix = originalSessionPrefix + Date.now() + "-";
+					}
 				}
 				var r = null;
 				if (
@@ -107,8 +126,10 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 				                    if (_previous === "dbCreate") return callback(err);
 				                    return r.dbCreate(DB_NAME).run(r.conn, function (err) {
 				                        if (err) {
+console.log("err.msg", err.msg);
 							                if (/Database .+? already exists/.test(err.msg)) {
 							                	// Ignore. Someone else beat us to it!
+							                	console.error("Ignoring database exists error!");
 							                } else {
 					                        	return callback(err);
 							                }
@@ -120,8 +141,10 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 				                    if (_previous === "tableCreate") return callback(err);
 				                    return r.db(DB_NAME).tableCreate(TABLE_NAME + "__" + tableSuffix).run(r.conn, function (err) {
 				                        if (err) {
+console.log("err.msg", err.msg);
 							                if (/Table .+? already exists/.test(err.msg)) {
 							                	// Ignore. Someone else beat us to it!
+							                	console.error("Ignoring table exists error!");
 							                } else {
 					                        	return callback(err);
 							                }
@@ -146,8 +169,10 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 						            		console.log("Creating index", indexName, "on table", TABLE_NAME + "__" + tableSuffix);
 								            return r.db(DB_NAME).table(TABLE_NAME + "__" + tableSuffix).indexCreate(indexName).run(r.conn, function (err, result) {
 						                        if (err) {
+console.log("err.msg", err.msg);
 									                if (/Index .+? already exists/.test(err.msg)) {
 									                	// Ignore. Someone else beat us to it!
+									                	console.error("Ignoring index exists error!");
 									                } else {
 							                        	return callback(err);
 									                }
@@ -244,12 +269,24 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 		        if (preAutoRoutesHandler) {
 		        	preAutoRoutesHandler(app, pio._config.config["pio.service"], {
 		        		API: {
+		        			FS: FS,
 		        			EXPRESS: EXPRESS,
 							DEEPMERGE: DEEPMERGE,
 							WAITFOR: WAITFOR,
-							Q: Q
+							Q: Q,
+							REQUEST: REQUEST
 		        		},
-	        			r: r
+	        			r: r,
+	        			makePublicklyAccessible: function(url) {
+							var parsedUrl = URL.parse(url);
+							delete parsedUrl.search;
+							parsedUrl.query = QUERYSTRING.parse(parsedUrl.query);
+							var accessProof = CRYPTO.createHash("sha1");
+							accessProof.update(["access-proof", authCode, pioConfig.config.pio.hostname, parsedUrl.pathname].join(":"));
+							parsedUrl.query["ap"] = accessProof.digest("hex");
+							url = URL.format(parsedUrl);
+							return url;
+	        			}
 		        	});
 		        }
 
@@ -328,8 +365,6 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 
 			    	return formatPath(function(err, path, pathExists) {
 			    		if (err) return next(err);
-
-		    			console.log("path", path, pathExists);
 		    			if (pathExists) {
 							if (
 								req.headers['x-format'] === "tpl" ||
@@ -463,6 +498,17 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 				    				return callback(null, config);
     							}
 
+//console.log("config", config);
+		    					if (
+		    						config &&
+		    						config.$page &&
+		    						config.$page.upstream &&
+		    						config.$page.upstream.pathname
+		    					) {
+		    						pathname = config.$page.upstream.pathname;
+		    					}
+//console.log("pathname", pathname);
+
 			    				return makeUpstreamRequests(pathname.replace(/(\.[^\/]+)$/, ".overlay.json"), null, function(err, response, body) {
 			    					if (err) return next(err);
 			    					if (!response) {
@@ -500,7 +546,7 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 		    				});
     					}
 
-	    				function processOverlay(config, templateSource) {
+	    				function processOverlay(config, templateSource, callback) {
 		    				return makeUpstreamRequests(pathname, config, function(err, response, body) {
 		    					if (err) return next(err);
 
@@ -514,7 +560,9 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 		    					}
 
 		    					if (response.statusCode === 404) {
-		    						return callback(new Error("No upstream file found at url '" + response._url + "' even though we have an overlay at '" + overlayPath + "'! Remove the overlay or make sure the file is served by upstream server."));
+		    						var err = new Error("No upstream file found at url '" + response._url + "' even though we have an overlay at '" + overlayPath + "'! Remove the overlay or make sure the file is served by upstream server.");
+		    						err.code = 404;
+		    						return callback(err);
 		    					}
 
 	                            // TODO: Get own instance: https://github.com/olado/doT/issues/112
@@ -584,8 +632,64 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 		    				return loadConfig(templateSource, function(err, config) {
 		    					if (err) return next(err);
 
+		    					function returnUpstreamResource() {
+					    			var urls = [].concat(pio._config.config["pio.service"].config.www.extends);
+					    			function forwardUpstream(upstreamInfo) {
+					    				if (typeof upstreamInfo === "string") {
+					    					upstreamInfo = {
+					    						host: upstreamInfo
+					    					};
+					    				}
+					    				var headers = {};
+					    				if (upstreamInfo.theme) {
+											headers["x-theme"] = upstreamInfo.theme;
+					    				}
+										var url = "http://" + upstreamInfo.host + pathname;
+					    				return REQUEST({
+					    					url: url,
+					    					method: "HEAD",
+					    					headers: headers
+					    				}, function(err, response, body) {
+					    					if (err) {
+												console.error("PROXY HEAD ERROR", err, err.stack);
+					    						return next(err);
+					    					}
+					    					if (response.statusCode === 404) {
+						    					if (urls.length === 0) return next();
+						    					return forwardUpstream(urls.pop());
+					    					}
+						    				if (upstreamInfo.theme) {
+								    			req.headers["x-theme"] = upstreamInfo.theme;
+						    				}
+								            return proxy.web(req, res, {
+								                target: "http://" + upstreamInfo.host
+								            }, function(err) {
+												console.error("PROXY ERROR", err, err.stack);
+								                if (err.code === "ECONNREFUSED") {
+								                    res.writeHead(502);
+								                    return res.end("Bad Gateway");
+								                }
+							                    res.writeHead(500);
+							                    console.error(err.stack);
+							                    return res.end("Internal Server Error");
+								            });
+					    				});
+					    			}
+					    			return forwardUpstream(urls.pop());
+		    					}
+
 		    					if (templateSource || config) {
-				    				return processOverlay(config, templateSource);
+				    				return processOverlay(config, templateSource, function(err, config) {
+				    					if (err) {
+				    						if (err.code === 404) {
+				    							// We ignore the missing upstream overlay path.
+						    					return returnUpstreamResource();
+				    						}
+				    						return next(err);
+				    					}
+				    					// Response sent. Nothing more to do.
+				    					return;
+									});
 		    					}
 
 		    					if (
@@ -596,49 +700,7 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 		    						return next();
 		    					}
 
-				    			var urls = [].concat(pio._config.config["pio.service"].config.www.extends);
-				    			function forwardUpstream(upstreamInfo) {
-				    				if (typeof upstreamInfo === "string") {
-				    					upstreamInfo = {
-				    						host: upstreamInfo
-				    					};
-				    				}
-				    				var headers = {};
-				    				if (upstreamInfo.theme) {
-										headers["x-theme"] = upstreamInfo.theme;
-				    				}
-									var url = "http://" + upstreamInfo.host + pathname;
-				    				return REQUEST({
-				    					url: url,
-				    					method: "HEAD",
-				    					headers: headers
-				    				}, function(err, response, body) {
-				    					if (err) {
-											console.error("PROXY HEAD ERROR", err, err.stack);
-				    						return next(err);
-				    					}
-				    					if (response.statusCode === 404) {
-					    					if (urls.length === 0) return next();
-					    					return forwardUpstream(urls.pop());
-				    					}
-					    				if (upstreamInfo.theme) {
-							    			req.headers["x-theme"] = upstreamInfo.theme;
-					    				}
-							            return proxy.web(req, res, {
-							                target: "http://" + upstreamInfo.host
-							            }, function(err) {
-											console.error("PROXY ERROR", err, err.stack);
-							                if (err.code === "ECONNREFUSED") {
-							                    res.writeHead(502);
-							                    return res.end("Bad Gateway");
-							                }
-						                    res.writeHead(500);
-						                    console.error(err.stack);
-						                    return res.end("Internal Server Error");
-							            });
-				    				});
-				    			}
-				    			return forwardUpstream(urls.pop());
+		    					return returnUpstreamResource();
 		    				});
 	    				});
 		    		});
@@ -653,6 +715,30 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 
 			    app.get(/^\//, function(req, res, next) {
 			    	return processRequest(false, req, res, next);
+			    });
+
+			    app.use(function (err, req, res, next) {
+		            if (err) {
+		                if (err.code === 403 && err.requestScope) {
+		                	if (
+		                		req.session.authorized &&
+		                		req.session.authorized.github &&
+		                		req.session.authorized.github.links &&
+		                		req.session.authorized.github.links.requestScope
+		                	) {
+		                		// TODO: Callback should come from config.
+								var url = req.session.authorized.github.links.requestScope
+											.replace(/\{\{scope\}\}/, err.requestScope)
+											.replace(/\{\{callback\}\}/, "http://io-pinf-server-ci." + pioConfig.config.pio.hostname + ":8013" + req.url);
+								console.log("Redirecting to url to request additional auth scope:", url);
+								return res.redirect(url);
+		                	} else {
+		                		console.log("Warning: 'req.session.authorized.github.links.requestScope' not set otherwise requested scope '" + err.requestScope + "' could be authorized.");
+		                	}
+		                }
+		                return next(err);
+		            }
+		            return next();
 			    });
 
 				var server = app.listen(PORT);
