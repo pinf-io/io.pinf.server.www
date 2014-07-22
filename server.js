@@ -65,7 +65,8 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 							DEEPMERGE: DEEPMERGE,
 							WAITFOR: WAITFOR,
 							Q: Q,
-							REQUEST: REQUEST
+							REQUEST: REQUEST,
+							SEND: SEND
 		        		}
 		        	});
 				} else {
@@ -274,7 +275,8 @@ console.log("err.msg", err.msg);
 							DEEPMERGE: DEEPMERGE,
 							WAITFOR: WAITFOR,
 							Q: Q,
-							REQUEST: REQUEST
+							REQUEST: REQUEST,
+							SEND: SEND
 		        		},
 	        			r: r,
 	        			makePublicklyAccessible: function(url) {
@@ -719,17 +721,17 @@ console.log("err.msg", err.msg);
 
 			    app.use(function (err, req, res, next) {
 		            if (err) {
-		                if (err.code === 403 && err.requestScope) {
+		                if (err.code === 403 && typeof err.requestScope !== "undefined") {
 		                	if (
 		                		req.session.authorized &&
 		                		req.session.authorized.github &&
 		                		req.session.authorized.github.links &&
-		                		req.session.authorized.github.links.requestScope
+		                		typeof req.session.authorized.github.links.requestScope !== "undefined"
 		                	) {
 		                		// TODO: Callback should come from config.
 								var url = req.session.authorized.github.links.requestScope
 											.replace(/\{\{scope\}\}/, err.requestScope)
-											.replace(/\{\{callback\}\}/, "http://io-pinf-server-ci." + pioConfig.config.pio.hostname + ":8013" + req.url);
+											.replace(/\{\{callback\}\}/, "http://io-pinf-server-ci." + pioConfig.config.pio.hostname + ":8013" + req.url + "?.reload-session-authorization=true");
 								console.log("Redirecting to url to request additional auth scope:", url);
 								return res.redirect(url);
 		                	} else {
