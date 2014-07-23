@@ -33,9 +33,19 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 
 	var exports = module.exports;
 
+	function addParamatersToUrl(url, paramaters) {
+		var parsedUrl = URL.parse(url);
+		delete parsedUrl.search;
+		parsedUrl.query = QUERYSTRING.parse(parsedUrl.query);
+		for (var name in paramaters) {
+			parsedUrl.query[name] = paramaters[name];
+		}
+		return URL.format(parsedUrl);
+	}
+
 	exports.main = function(callback) {
 
-	    var pioConfig = FS.readJsonSync(PATH.join(__dirname, "../.pio.json"));
+	    var pioConfig = FS.readJsonSync(PATH.join(packagePath, "../.pio.json"));
 
 	    var authCode = CRYPTO.createHash("sha1");
 	    authCode.update(["auth-code", pioConfig.config.pio.instanceId, pioConfig.config.pio.instanceSecret].join(":"));
@@ -243,6 +253,7 @@ console.log("err.msg", err.msg);
 						return next();
 					}
 					// TODO: Cache for some time.
+					console.log("Calling: " + req.headers["x-session-url"]);
 	                return REQUEST({
 	                    url: req.headers["x-session-url"],
 	                    headers: {
@@ -256,6 +267,7 @@ console.log("err.msg", err.msg);
 	                    	body["$status"] === 200
                     	) {
                     		delete body.$status;
+							console.log("Got valid session info");
 							if (req.session) {
 	                    		req.session.authorized = body;
 	                    	}
@@ -263,6 +275,8 @@ console.log("err.msg", err.msg);
 	                    		res.view = {};
 	                    	}
 	                    	res.view.authorized = body;
+                    	} else {
+							console.log("No valid session info");
                     	}
 						return next();
 	                });
@@ -318,6 +332,31 @@ console.log("err.msg", err.msg);
 		                });
 		                return res.end();
 		            }
+		            if (req.query[".requestScope"] && req.query[".returnTo"]) {
+
+console.log("req.query", req.query);
+console.log("req.headers", req.headers);
+console.log("req.session", req.session);
+
+	                	if (
+	                		req.session &&
+	                		req.session.authorized &&
+	                		req.session.authorized.github &&
+	                		req.session.authorized.github.links &&
+	                		typeof req.session.authorized.github.links.requestScope !== "undefined"
+	                	) {
+	                		// TODO: Callback should come from config.
+							var url = req.session.authorized.github.links.requestScope
+										.replace(/\{\{scope\}\}/, req.query[".requestScope"])
+										.replace(/\{\{callback\}\}/, addParamatersToUrl(req.query[".returnTo"], {
+											".reload-session-authorization": "true"
+										}));
+							console.log("Redirecting to url to request additional auth scope:", url);
+							return res.redirect(url);
+	                	} else {
+	                		console.log("Warning: 'req.session.authorized.github.links.requestScope' not set otherwise requested scope '" + req.query[".requestScope"] + "' could be authorized.");
+	                	}
+	                }
 
 		    		function formatPath(callback) {
 
@@ -731,7 +770,9 @@ console.log("err.msg", err.msg);
 		                		// TODO: Callback should come from config.
 								var url = req.session.authorized.github.links.requestScope
 											.replace(/\{\{scope\}\}/, err.requestScope)
-											.replace(/\{\{callback\}\}/, "http://io-pinf-server-ci." + pioConfig.config.pio.hostname + ":8013" + req.url + "?.reload-session-authorization=true");
+											.replace(/\{\{callback\}\}/, addParamatersToUrl("http://io-pinf-server-ci." + pioConfig.config.pio.hostname + ":8013" + req.url, {
+												".reload-session-authorization": "true"
+											}));
 								console.log("Redirecting to url to request additional auth scope:", url);
 								return res.redirect(url);
 		                	} else {
