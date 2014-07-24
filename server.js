@@ -692,7 +692,7 @@ console.log("req.session", req.session);
 					    					headers: headers
 					    				}, function(err, response, body) {
 					    					if (err) {
-												console.error("PROXY HEAD ERROR", err, err.stack);
+												console.error("PROXY HEAD ERROR while calling '" + url + "':", err, err.stack);
 					    						return next(err);
 					    					}
 					    					if (response.statusCode === 404) {
@@ -705,7 +705,7 @@ console.log("req.session", req.session);
 								            return proxy.web(req, res, {
 								                target: "http://" + upstreamInfo.host
 								            }, function(err) {
-												console.error("PROXY ERROR", err, err.stack);
+												console.error("PROXY ERROR while calling '" + url + "':", err, err.stack);
 								                if (err.code === "ECONNREFUSED") {
 								                    res.writeHead(502);
 								                    return res.end("Bad Gateway");
