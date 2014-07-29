@@ -263,18 +263,31 @@ console.log("err.msg", err.msg);
 	                    if (err) return callback(err);
 	                    if (
 	                    	_res.statusCode === 200 &&
-	                    	body && (body = JSON.parse(body)) &&
-	                    	body["$status"] === 200
-                    	) {
-                    		delete body.$status;
-							console.log("Got valid session info");
-							if (req.session) {
-	                    		req.session.authorized = body;
-	                    	}
-	                    	if (!res.view) {
-	                    		res.view = {};
-	                    	}
-	                    	res.view.authorized = body;
+	                    	body
+	                    ) {
+	                    	try {
+		                    	body = JSON.parse(body);
+		                    } catch(err) {
+		                    	console.error("JSON parse error '" + err.message + "' while parsing:", body);
+		                    	body = null;
+		                    }
+		                    if (body) {
+		                    	body["$status"] === 200
+
+	                    		delete body.$status;
+								console.log("Got valid session info");
+								if (req.session) {
+		                    		req.session.authorized = body;
+		                    	} else {
+		                    		console.log("Warning: Did not cache session as our sessions are not enabled. To enable set the 'memcachedHost' config property.");
+		                    	}
+		                    	if (!res.view) {
+		                    		res.view = {};
+		                    	}
+		                    	res.view.authorized = body;
+		                    } else {
+								console.log("No valid session info");
+		                    }
                     	} else {
 							console.log("No valid session info");
                     	}
