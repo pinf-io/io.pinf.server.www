@@ -438,7 +438,7 @@ console.log("req.session", req.session);
 	                            DOT.templateSettings.varname = "view";
 		                        var compiled = null;
 		                        try {
-		                            compiled = DOT.template(templateSource);
+		                            compiled = DOT.template(templateSource, undefined, res.viewdef || null);
 		                        } catch(err) {
 									console.error("templateSource", templateSource);
 		                        	console.error("Error compiling template: " + path);
