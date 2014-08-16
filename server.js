@@ -224,23 +224,40 @@ console.log("err.msg", err.msg);
 				            });
 				        });
 				    }
-					RETHINKDB.connect({
-						host: pio._config.config["pio.service"].config.rethinkdbHost.split(":")[0],
-						port: parseInt(pio._config.config["pio.service"].config.rethinkdbHost.split(":")[1])
-					}, function(err, conn) {
-						if(err) {
-							console.error("Error connecting to RethinkDB host: " + pio._config.config["pio.service"].config.rethinkdbHost, err);
-							return;
-					  	}
-  						r.conn = conn;
+				    function connectToRethinkDB() {
+				    	function reconnect() {
+				    		console.log("Reconnect scheduled ...");
+				    		setTimeout(function () {
+				    			connectToRethinkDB();
+				    		}, 2000);
+				    	}
+				    	console.log("Try to connect to RethinkDB ...");
+						RETHINKDB.connect({
+							host: pio._config.config["pio.service"].config.rethinkdbHost.split(":")[0],
+							port: parseInt(pio._config.config["pio.service"].config.rethinkdbHost.split(":")[1])
+						}, function(err, conn) {
+							if(err) {
+								console.error("Error connecting to RethinkDB host: " + pio._config.config["pio.service"].config.rethinkdbHost, err);
+								return reconnect();
+						  	}
+	  						r.conn = conn;
 
-						console.log("Now that DB is connected run pending queries ...");
-						var pending = tableEnsure__pending;
-						tableEnsure__pending = false;
-						pending.forEach(function (call) {
-							r.tableEnsure.apply(r, call);
+	  						conn.once("close", function () {
+	  							console.log("DB connection closed!");
+	  							return reconnect();
+	  						});
+
+							console.log("Now that DB is connected run pending queries ...");
+							var pending = tableEnsure__pending;
+							tableEnsure__pending = false;
+							if (pending) {
+								pending.forEach(function (call) {
+									r.tableEnsure.apply(r, call);
+								});
+							}
 						});
-					});
+					}					
+					connectToRethinkDB();
 					app.use(function(req, res, next) {
 						if (r) {
 							res.r = r;
