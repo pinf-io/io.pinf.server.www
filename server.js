@@ -513,6 +513,11 @@ console.log("req.session", req.session);
 									headers["x-theme"] = upstreamInfo.theme;
 									headers["x-format"] = "tpl";
 			    				}
+			    				if (upstreamInfo.headers) {
+			    					for (var name in upstreamInfo.headers) {
+			    						headers[name] = upstreamInfo.headers[name].replace("$" + name, req.headers[name] || "");
+			    					}
+			    				}
 				    			var url = "http://" + upstreamInfo.host + pathname;
 				    			var params = {
 				    				url: url,
@@ -656,6 +661,13 @@ console.log("req.session", req.session);
 								while (m = re.exec(body)) {
 									var at = DEEPCOPY(config);
 									at.config = JSON.stringify(config);
+									at.session = {
+										authorized: req.session.authorized ? true : false,
+										roles: "[]"
+									};
+									if (req.session.authorized) {
+										at.session.roles = JSON.stringify(req.session.authorized.roles);
+									}
 									at[m[1]] = true;
 		                            try {
 		                            	console.log("Replacing variables in '" + overlayPath + "' with:", JSON.stringify(at, null, 4));
