@@ -483,7 +483,7 @@ console.log("req.session", req.session);
 
     					function loadOverlay(callback) {
 				    		return FS.exists(overlayPath, function(overlayExists) {
-				    			console.log("overlayPath", overlayPath, overlayExists);
+//				    			console.log("overlayPath", overlayPath, overlayExists);
 				    			if (!overlayExists) {
 				    				return callback(null, false);
 				    			}
@@ -555,7 +555,7 @@ console.log("req.session", req.session);
     						function loadLocal(callback) {
 				    			var configPath = overlayPath.replace(/\.[^\.]+$/, ".json");
 					    		return FS.exists(configPath, function(configExists) {
-					    			console.log("configPath", configPath, configExists);
+//					    			console.log("configPath", configPath, configExists);
 					    			if (!configExists) {
 					    				return callback(null, false);
 					    			}
