@@ -33,6 +33,12 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 
 	var exports = module.exports;
 
+	var options = null;
+	if (typeof postAutoRoutesHandler === "object") {
+		options = postAutoRoutesHandler;
+		postAutoRoutesHandler = null;
+	}
+
 	function addParamatersToUrl(url, paramaters) {
 		var parsedUrl = URL.parse(url);
 		delete parsedUrl.search;
@@ -52,6 +58,15 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 	    authCode = authCode.digest("hex");
 
 		return PIO.forPackage(packagePath).then(function(pio) {
+			if (
+				!options ||
+				!options.startupDelay
+			) return pio;
+			console.log("Delay startup by:", options.startupDelay);
+			return Q.delay(options.startupDelay).then(function() {
+				return pio;
+			});
+		}).then(function(pio) {
 
 			try {
 
@@ -390,8 +405,24 @@ console.log("req.session", req.session);
 
 		    		function formatPath(callback) {
 
+		    			function isFile(path, callback) {
+							return FS.exists(path, function(exists) {
+				    			if (!exists) {
+				    				return callback(null, false);
+				    			}
+				    			return FS.stat(path, function(err, stat) {
+				    				if (err) return callback(err);
+				    				if (!stat.isFile()) {
+				    					return callback(null, false);
+				    				}
+				    				return callback(null, true);
+				    			});
+				    		});
+		    			}
+
 		    			function checkExtensions(originalPath, callback) {
-				    		return FS.exists(originalPath, function(exists) {
+				    		return isFile(originalPath, function(err, exists) {
+				    			if (err) return callback(err);
 				    			if (/\/[^\/]+\.[^\.]+$/.test(pathname)) {
 					    			return callback(null, originalPath, exists);
 				    			}
@@ -404,7 +435,8 @@ console.log("req.session", req.session);
 				    					pathname += ".htm";
 				    					path += ".htm";
 				    				}
-						    		return FS.exists(path, function(exists) {
+						    		return isFile(path, function(err, exists) {
+						    			if (err) return callback(err);
 						    			return callback(null, path, exists);
 						    		});
 				    			}
@@ -425,7 +457,8 @@ console.log("req.session", req.session);
 
 			    		// TODO: Make themes path configurable.
 			    		var path = PATH.join(packagePath, "themes", req.headers['x-theme']);
-			    		return FS.exists(path, function(exists) {
+			    		return isFile(path, function(err, exists) {
+			    			if (err) return callback(err);
 			    			if (!exists) {
 				    			res.writeHead(404);
 				    			return res.end();
@@ -826,9 +859,11 @@ console.log("req.session", req.session);
 		            return next();
 			    });
 
+				console.log("Try listening at: http://0.0.0.0:" + PORT);
+
 				var server = app.listen(PORT);
 
-				console.log("Listening at: http://localhost:" + PORT);
+				console.log("Listening at: http://0.0.0.0:" + PORT);
 
 			    return callback(null, {
 			        server: server
