@@ -28,6 +28,7 @@ const CRYPTO = require("crypto");
 
 var PORT = process.env.PORT || 8080;
 
+const DEBUG = true;
 
 exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutesHandler, appCreatorHandler) {
 
@@ -117,7 +118,7 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 					});
 					app.use(EXPRESS_SESSION({
 						secret: 'session secret',
-						key: 'sid',
+						key: 'sid-' + PORT,
 						proxy: 'true',
 						store: sessionStore
 					}));
@@ -366,6 +367,10 @@ console.log("err.msg", err.msg);
 		    		var pathname = req._parsedUrl.pathname;
 		    		if (pathname === "/") pathname = "/index";
 
+		    		if (DEBUG) {
+		    			console.log("processRequest", "pathname", pathname);
+		    		}
+
 		    		// This is a standard route to echo a value specified as a query argument
 		    		// back as a session cookie.
 		    		// TODO: Standardize a route such as this.
@@ -379,9 +384,11 @@ console.log("err.msg", err.msg);
 		            }
 		            if (req.query[".requestScope"] && req.query[".returnTo"]) {
 
-console.log("req.query", req.query);
-console.log("req.headers", req.headers);
-console.log("req.session", req.session);
+		            	if (DEBUG) {
+							console.log("req.query", req.query);
+							console.log("req.headers", req.headers);
+							console.log("req.session", req.session);
+						}
 
 	                	if (
 	                		req.session &&
@@ -405,7 +412,7 @@ console.log("req.session", req.session);
 
 		    		function formatPath(callback) {
 
-		    			function isFile(path, callback) {
+		    			function isFile (path, callback) {
 							return FS.exists(path, function(exists) {
 				    			if (!exists) {
 				    				return callback(null, false);
@@ -413,6 +420,21 @@ console.log("req.session", req.session);
 				    			return FS.stat(path, function(err, stat) {
 				    				if (err) return callback(err);
 				    				if (!stat.isFile()) {
+				    					return callback(null, false);
+				    				}
+				    				return callback(null, true);
+				    			});
+				    		});
+		    			}
+
+		    			function isDirectory (path, callback) {
+							return FS.exists(path, function(exists) {
+				    			if (!exists) {
+				    				return callback(null, false);
+				    			}
+				    			return FS.stat(path, function(err, stat) {
+				    				if (err) return callback(err);
+				    				if (!stat.isDirectory()) {
 				    					return callback(null, false);
 				    				}
 				    				return callback(null, true);
@@ -444,6 +466,10 @@ console.log("req.session", req.session);
 				    		});
 		    			}
 
+			    		if (DEBUG) {
+			    			console.log("req.headers", req.headers);
+			    		}
+
 				    	if (!req.headers['x-theme']) {
 			    			return checkExtensions(PATH.join(packagePath, documentRootPath, pathname), callback);
 				    	}
@@ -451,15 +477,21 @@ console.log("req.session", req.session);
 			    		// Don't allow slashes in themes.
 			    		// TODO: Use abstracted sanitizer.
 			    		if (/\//.test(req.headers['x-theme'])) {
+				    		if (DEBUG) {
+				    			console.log("404: Slash in theme");
+				    		}
 			    			res.writeHead(404);
 			    			return res.end();
 			    		}
 
 			    		// TODO: Make themes path configurable.
 			    		var path = PATH.join(packagePath, "themes", req.headers['x-theme']);
-			    		return isFile(path, function(err, exists) {
+			    		return isDirectory(path, function(err, exists) {
 			    			if (err) return callback(err);
 			    			if (!exists) {
+					    		if (DEBUG) {
+					    			console.log("404: Theme base path does not exist at: " + path);
+					    		}
 				    			res.writeHead(404);
 				    			return res.end();
 			    			}
@@ -469,6 +501,11 @@ console.log("req.session", req.session);
 
 			    	return formatPath(function(err, path, pathExists) {
 			    		if (err) return next(err);
+
+			    		if (DEBUG) {
+				    		console.log("formatted path", path, pathExists);
+				    	}
+
 		    			if (pathExists) {
 							if (
 								req.headers['x-format'] === "tpl" ||
@@ -516,7 +553,9 @@ console.log("req.session", req.session);
 
     					function loadOverlay(callback) {
 				    		return FS.exists(overlayPath, function(overlayExists) {
-//				    			console.log("overlayPath", overlayPath, overlayExists);
+				    			if (DEBUG) {
+					    			console.log("overlayPath", overlayPath, overlayExists);
+					    		}
 				    			if (!overlayExists) {
 				    				return callback(null, false);
 				    			}
@@ -540,7 +579,9 @@ console.log("req.session", req.session);
 			    						host: upstreamInfo
 			    					};
 			    				}
-				    			console.log("upstreamInfo", upstreamInfo);
+			    				if (DEBUG) {
+					    			console.log("makeRequest(upstreamInfo)", upstreamInfo);
+					    		}
 			    				var headers = {};
 			    				if (upstreamInfo.theme) {
 									headers["x-theme"] = upstreamInfo.theme;
@@ -561,6 +602,9 @@ console.log("req.session", req.session);
 				    				params.json = sendConfig;
 				    				params.headers["x-config"] = "in-body";
 				    			}
+			    				if (DEBUG) {
+			    					console.log("upstream url", url);
+			    				}
 				    			return REQUEST(params, function(err, response, body) {
 				    				if (err) {
 				    					console.error("body", body);
@@ -570,6 +614,9 @@ console.log("req.session", req.session);
 				    					return callback(err);
 				    				}
 				    				response._url = url;
+				    				if (DEBUG) {
+				    					console.log("upstream response code", response.statusCode);
+				    				}
 				    				if (response.statusCode === 404) {
 				    					if (urls.length === 0) {
 				    						return callback(null, response, null);
@@ -649,6 +696,7 @@ console.log("req.session", req.session);
 
 		                            config = JSON.parse(result);
 
+//console.log("final config", config);
 
 		    						return callback(null, config);
 				    			});
@@ -656,6 +704,11 @@ console.log("req.session", req.session);
     					}
 
 	    				function processOverlay(config, templateSource, callback) {
+
+							if (DEBUG) {
+								console.log("processOverlay()");
+							}
+
 		    				return makeUpstreamRequests(pathname, config, function(err, response, body) {
 		    					if (err) return next(err);
 
@@ -745,8 +798,16 @@ console.log("req.session", req.session);
 	    				return loadOverlay(function(err, templateSource) {
 	    					if (err) return next(err);
 
+							if (DEBUG) {
+								console.log("loaded overlay templateSource", templateSource);
+							}
+
 		    				return loadConfig(templateSource, function(err, config) {
 		    					if (err) return next(err);
+
+								if (DEBUG) {
+									console.log("loaded config", config);
+								}
 
 		    					function returnUpstreamResource() {
 					    			var urls = [].concat(pio._config.config["pio.service"].config.www.extends);
