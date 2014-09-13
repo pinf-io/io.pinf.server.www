@@ -630,17 +630,28 @@ console.log("err.msg", err.msg);
     						return makeRequest(urls.pop());
     					}
 
-    					function loadConfig(templateSource, callback) {
+    					function loadConfig(callback) {
 
     						function loadLocal(callback) {
-				    			var configPath = overlayPath.replace(/\.[^\.]+$/, ".json");
-					    		return FS.exists(configPath, function(configExists) {
-//					    			console.log("configPath", configPath, configExists);
-					    			if (!configExists) {
-					    				return callback(null, false);
-					    			}
-					    			return FS.readJson(configPath, callback);
-					    		});
+				    			function loadPath(configPath, callback) {
+						    		return FS.exists(configPath, function(configExists) {
+	//					    			console.log("configPath", configPath, configExists);
+						    			if (!configExists) {
+						    				return callback(null, false);
+						    			}
+						    			return FS.readJson(configPath, function (err, config) {
+			    							if (err) return callback(err);
+			    							if (typeof config.extends === "string") {
+			    								return loadPath(PATH.join(configPath, "..", config.extends + ".overlay.json"), function (err, extendsConfig) {
+			    									if (err) return callback(err);
+								    				return callback(null, DEEPMERGE(extendsConfig, config));
+			    								});
+			    							}
+						    				return callback(null, config);
+						    			});
+						    		});
+				    			}
+				    			return loadPath(overlayPath.replace(/\.[^\.]+$/, ".json"), callback);
     						}
 
     						return loadLocal(function(err, localConfig) {
@@ -795,18 +806,22 @@ console.log("err.msg", err.msg);
 			    			});
 	    				}
 
-	    				return loadOverlay(function(err, templateSource) {
+	    				return loadConfig(function(err, config) {
 	    					if (err) return next(err);
 
 							if (DEBUG) {
-								console.log("loaded overlay templateSource", templateSource);
+								console.log("loaded config", config);
 							}
 
-		    				return loadConfig(templateSource, function(err, config) {
+							if (typeof config.extends === "string") {
+								overlayPath = PATH.join(overlayPath, "..", config.extends + ".overlay.htm" + ((config.extends === "./index")?"l":""));
+							}
+
+		    				return loadOverlay(function(err, templateSource) {
 		    					if (err) return next(err);
 
 								if (DEBUG) {
-									console.log("loaded config", config);
+									console.log("loaded overlay templateSource", templateSource);
 								}
 
 		    					function returnUpstreamResource() {
