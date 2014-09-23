@@ -544,6 +544,8 @@ console.log("err.msg", err.msg);
 	                                result = compiled(res.view || {});
 	                            } catch(err) {
 		                        	console.error("Error running compiled template: " + path);
+		                        	err.message += " (while running compiled template: " + path + ")";
+		                        	err.stack += "\n(while running compiled template: " + path + ")";
 		                            return next(err);
 	                            }
 

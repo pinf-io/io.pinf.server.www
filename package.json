@@ -9,7 +9,7 @@
     "glob": "~3.2.9",
     "fs-extra": "~0.8.1",
     "requirejs": "~2.1.11",
-    "dot": "~1.0.2",
+    "dot": "https://github.com/olado/doT/archive/daf27a4d673bf321d80634e12e65530aa4c67edb.tar.gz",
     "pio": "^0.6",
     "deepmerge": "~0.2.7",
     "deepcopy": "~0.3.3",
