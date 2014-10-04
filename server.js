@@ -224,13 +224,16 @@ console.log("err.msg", err.msg);
 				                if (err) return callback(err);
 				                console.log("Result for key '" + key + "':", result);
 				                if (result) {
-				                	// TODO: Make cache expiry timeout configurable.
-				                	if (result.updatedon && result.updatedon > (Date.now() - 60 * 5 * 1000)) {
-					                    console.log("Using cached data for key '" + key + "':", result.data);
-					                    return callback(null, result.data);
-				                	}
+				                	if (result.updatedon) {
+					                	// TODO: Make cache expiry timeout configurable.
+					                	if (result.updatedon > (Date.now() - 60 * 5 * 1000)) {
+						                    console.log("Using cached data for key '" + key + "':", result.data);
+						                    return callback(null, result.data);
+					                	}
+						                console.log("No cached data for key: " + key + "(age: " + Math.round((Date.now()-result.updatedon)/1000) + ")");
+						            }
 				                }
-				                console.log("No cached data for key: " + key + "(age: " + Math.round((Date.now()-result.updatedon)/1000) + ")");
+				                console.log("No cached data for key: " + key);
 				                return callback(null, null, function (data, callback) {
 				                	console.log("Update cache data for key: " + key);
 				                    return table.insert({
