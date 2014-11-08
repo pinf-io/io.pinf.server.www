@@ -105,6 +105,7 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 		        app.use(COOKIE_PARSER());
 		        app.use(BODY_PARSER());
 		        app.use(METHOD_OVERRIDE());
+
 				if (
 					pio._config.config["pio.service"].config &&
 					pio._config.config["pio.service"].config.memcachedHost
@@ -771,10 +772,10 @@ console.log("err.msg", err.msg);
 									var at = DEEPCOPY(config);
 									at.config = JSON.stringify(config);
 									at.session = {
-										authorized: req.session.authorized ? true : false,
+										authorized: (req.session && req.session.authorized) ? true : false,
 										roles: "[]"
 									};
-									if (req.session.authorized) {
+									if (req.session && req.session.authorized) {
 										at.session.roles = JSON.stringify(req.session.authorized.roles);
 									}
 									at[m[1]] = true;
