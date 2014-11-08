@@ -953,6 +953,19 @@ console.log("err.msg", err.msg);
 
 				console.log("Listening at: http://0.0.0.0:" + PORT);
 
+				function monitorMemoryUsage() {
+					return setInterval(function () {
+
+						var usage = process.memoryUsage();
+						// usage = { rss: 180654080, heapTotal: 152136504, heapUsed: 111973544 }
+						// usage = { rss:  77484032, heapTotal:  62339584, heapUsed:  30995360 }
+
+						console.log("Memory usage:", usage);
+
+					}, 60 * 1000);
+				}
+				monitorMemoryUsage();
+
 			    return callback(null, {
 			        server: server
 			    });
