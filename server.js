@@ -292,7 +292,34 @@ console.log("err.msg", err.msg);
 						return next();
 					});
 				}
+
+				var requestCount = 0;
+
+				app.get("/_internal_status", function(req, res, next) {
+
+					if (!req.headers["x-auth-token"]) {
+						return next();
+					}
+					if (req.headers["x-auth-token"] !== pio._config.config["pio.service"].config.internalStatusAuthToken) {
+						return next(new Error("'x-auth-token' is invalid"));
+					}
+
+					var payload = {
+						process: {
+							memoryUsage: process.memoryUsage()
+						},
+						server: {
+							requestCount: requestCount
+						}
+					};
+
+					return res.end(JSON.stringify(payload, null, 4));
+				});
+
 				app.use(function(req, res, next) {
+
+					requestCount += 1;
+
 					if (!req.headers["x-session-url"]) {
 						return next();
 					}
