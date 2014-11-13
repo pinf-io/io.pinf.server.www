@@ -405,8 +405,10 @@ console.log("err.msg", err.msg);
 		    		var pathname = req._parsedUrl.pathname;
 		    		if (pathname === "/") pathname = "/index";
 
+		    		var search = req._parsedUrl.search || "";
+
 		    		if (DEBUG) {
-		    			console.log("processRequest", "pathname", pathname);
+		    			console.log("processRequest", "pathname", pathname, "search", search);
 		    		}
 
 		    		// This is a standard route to echo a value specified as a query argument
@@ -876,7 +878,8 @@ console.log("err.msg", err.msg);
 					    				if (upstreamInfo.theme) {
 											headers["x-theme"] = upstreamInfo.theme;
 					    				}
-										var url = "http://" + upstreamInfo.host + pathname;
+										var url = "http://" + upstreamInfo.host + pathname + search;
+										console.log("calling url", url);
 					    				return REQUEST({
 					    					url: url,
 					    					method: "HEAD",
