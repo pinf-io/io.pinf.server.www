@@ -983,7 +983,7 @@ console.log("err.msg", err.msg);
 				var server = app.listen(PORT);
 
 				console.log("Listening at: http://0.0.0.0:" + PORT);
-
+/*
 				function monitorMemoryUsage() {
 					return setInterval(function () {
 
@@ -996,7 +996,7 @@ console.log("err.msg", err.msg);
 					}, 60 * 1000);
 				}
 				monitorMemoryUsage();
-
+*/
 			    return callback(null, {
 			        server: server
 			    });
