@@ -762,7 +762,14 @@ console.log("err.msg", err.msg);
 								console.log("processOverlay()");
 							}
 
-		    				return makeUpstreamRequests(pathname, config, function(err, response, body) {
+							var upstreamConfig = JSON.parse(JSON.stringify(config));
+							if (templateSource) {
+								if (!upstreamConfig.$page) {
+									upstreamConfig.$page = {};
+								}
+								upstreamConfig.$page.processTemplateSource = false;
+							}
+		    				return makeUpstreamRequests(pathname, upstreamConfig, function(err, response, body) {
 		    					if (err) return next(err);
 
 		    					if (!response) {
@@ -779,6 +786,19 @@ console.log("err.msg", err.msg);
 		    						err.code = 404;
 		    						return callback(err);
 		    					}
+
+		    					if (
+		    						config.$page &&
+		    						config.$page.processTemplateSource === false
+	    						) {
+	    							console.log("Bypass template source processing due to `config.$page.processTemplateSource === false`");
+		                            // TODO: Send proper headers.
+		                            res.writeHead(200, {
+		                            	"Content-Type": response.headers["content-type"],
+		                            	"Content-Length": body.length
+		                            });
+		                            return res.end(body);
+	    						}
 
 	                            // TODO: Get own instance: https://github.com/olado/doT/issues/112
 	                            DOT.templateSettings.strip = false;
@@ -808,6 +828,14 @@ console.log("err.msg", err.msg);
 										at.session.roles = JSON.stringify(req.session.authorized.roles);
 									}
 									at[m[1]] = true;
+									if (res.view) {
+										if (!at.view) {
+											at.view = {};
+										}
+										for (var name in res.view) {
+											at.view[name] = res.view[name];
+										}
+									}
 		                            try {
 		                            	console.log("Replacing variables in '" + overlayPath + "' with:", JSON.stringify(at, null, 4));
 										anchors[m[1]] = compiled(at) || "";
@@ -830,10 +858,9 @@ console.log("err.msg", err.msg);
 
 	                            var result = null;
 	                            try {
-	                                result = compiled({
-	                                	title: "Our Title",
-	                                	anchor: anchors
-	                                });
+	                            	var vars = Object.create(config.view);
+	                            	vars.anchor = anchors;
+	                                result = compiled(vars);
 	                            } catch(err) {
 		                        	console.error("Error running compiled template: " + url);
 		                            return next(err);
@@ -1019,4 +1046,3 @@ console.log("err.msg", err.msg);
 
 
 exports.for(module, __dirname);
-
