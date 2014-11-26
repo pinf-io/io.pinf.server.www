@@ -894,6 +894,41 @@ console.log("err.msg", err.msg);
 								}
 
 		    					function returnUpstreamResource() {
+		    						console.log("returnUpstreamResource()");
+
+									if (req.headers['x-pio-proxy-upstream-host']) {
+
+										var url = "http://" + req.headers['x-pio-proxy-upstream-host'] + pathname + search;
+										delete req.headers['x-pio-proxy-upstream-host'];
+
+										var params = {
+					    					url: url,
+					    					method: req.method,
+					    					headers: req.headers
+					    				};
+
+										var body = req.body;
+										// TODO: We should just use the raw data here.
+										if (req.method === "POST") {
+											if (typeof req.body !== "string") {
+												body = JSON.stringify(body);
+												delete req.headers['content-length'];
+											}
+											params.body = body;
+										}
+
+										console.log("calling '" + req.method + "' on url", params);
+
+										return REQUEST(params, function(err, response, body) {
+					    					if (err) {
+												console.error("PROXY POST ERROR while calling '" + url + "':", err, err.stack);
+					    						return next(err);
+					    					}
+											res.writeHead(response.statusCode, response.headers);
+											return res.end(body);
+					    				});
+									}
+
 					    			var urls = [].concat(pio._config.config["pio.service"].config.www.extends);
 					    			function forwardUpstream(upstreamInfo) {
 					    				if (typeof upstreamInfo === "string") {
@@ -906,7 +941,7 @@ console.log("err.msg", err.msg);
 											headers["x-theme"] = upstreamInfo.theme;
 					    				}
 										var url = "http://" + upstreamInfo.host + pathname + search;
-										console.log("calling url", url);
+										console.log("calling HEAD on url", url);
 					    				return REQUEST({
 					    					url: url,
 					    					method: "HEAD",
@@ -972,7 +1007,10 @@ console.log("err.msg", err.msg);
 			    	if (req.headers["x-config"] === "in-body") {
 						return processRequest(req.body, req, res, next);
 			    	}
-			    	return next();
+			    	if (req.headers['x-pio-proxy-upstream-host']) {
+						return processRequest(false, req, res, next);
+					}
+					return next();
 			    });
 
 			    app.get(/^\//, function(req, res, next) {
