@@ -28,7 +28,7 @@ const CRYPTO = require("crypto");
 
 var PORT = process.env.PORT || 8080;
 
-const DEBUG = true;
+const DEBUG = false;
 
 exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutesHandler, appCreatorHandler) {
 
@@ -81,6 +81,32 @@ exports.for = function(module, packagePath, preAutoRoutesHandler, postAutoRoutes
 				}
 
 				console.log("Using document root path:", documentRootPath);
+
+				function makeGlobalHelpers (pio) {
+					return {
+						// TODO: Load this API implementation right from the email module.
+						sendEmail: function (info, callback) {
+							if (!pio._config.config["pio.service"].config.email) {
+								return callback(null);
+							}
+					        return REQUEST({
+					            uri: "http://" + pio._config.config["pio.service"].config.email.host + "/send",
+					            method: "POST",
+					            json: {
+					            	from: info.from || pio._config.config["pio.service"].config.email.from || null,
+					            	to: info.to || pio._config.config["pio.service"].config.email.to || null,
+					            	subject: info.subject,
+					                text: info.text
+					            }
+					        }, function(err, res, body) {
+					            if (err) return callback(err);
+					            return callback(null);
+					        });
+						}
+					};
+				}
+				var GLOABL_HELPERS = makeGlobalHelpers(pio);
+				GLOABL_HELPERS.makeGlobalHelpers = makeGlobalHelpers;
 
 			    var app = null;
 			    if (appCreatorHandler) {
@@ -316,6 +342,16 @@ console.log("err.msg", err.msg);
 					return res.end(JSON.stringify(payload, null, 4));
 				});
 
+
+				if (pio._config.config["pio.service"].config.email) {
+					app.use(function(req, res, next) {
+						for (var name in GLOABL_HELPERS) {
+							res[name] = GLOABL_HELPERS[name];
+						}
+						return next();
+					});
+				}
+
 				app.use(function(req, res, next) {
 
 					requestCount += 1;
@@ -324,7 +360,9 @@ console.log("err.msg", err.msg);
 						return next();
 					}
 					// TODO: Cache for some time.
-					console.log("Calling: " + req.headers["x-session-url"]);
+					if (DEBUG) {
+						console.log("Calling: " + req.headers["x-session-url"]);
+					}
 	                return REQUEST({
 	                    url: req.headers["x-session-url"],
 	                    headers: {
@@ -346,7 +384,9 @@ console.log("err.msg", err.msg);
 		                    	body["$status"] === 200
 
 	                    		delete body.$status;
-								console.log("Got valid session info");
+	                    		if (DEBUG) {
+									console.log("Got valid session info");
+								}
 								if (req.session) {
 		                    		req.session.authorized = body;
 		                    	} else {
@@ -357,16 +397,20 @@ console.log("err.msg", err.msg);
 		                    	}
 		                    	res.view.authorized = body;
 		                    } else {
-								console.log("No valid session info");
+		                    	if (DEBUG) {
+									console.log("No valid session info");
+								}
 		                    }
                     	} else {
-							console.log("No valid session info");
+                    		if (DEBUG) {
+								console.log("No valid session info");
+							}
                     	}
 						return next();
 	                });
 				});
 		        if (preAutoRoutesHandler) {
-		        	preAutoRoutesHandler(app, pio._config.config["pio.service"], {
+		        	var helpers = {
 		        		API: {
 		        			FS: FS,
 		        			EXPRESS: EXPRESS,
@@ -387,7 +431,13 @@ console.log("err.msg", err.msg);
 							url = URL.format(parsedUrl);
 							return url;
 	        			}
-		        	});
+		        	};
+
+					for (var name in GLOABL_HELPERS) {
+						helpers[name] = GLOABL_HELPERS[name];
+					}
+
+		        	preAutoRoutesHandler(app, pio._config.config["pio.service"], helpers);
 		        }
 
 		        // Default routes inserted by config.
